@@ -1,10 +1,7 @@
 """
 Programa principal - GUI interactiva para procesamiento de imagenes.
-Filtrado de ruido sal y pimienta en dominio espacial y frecuencia.
-
-Pipeline:
-  RGB -> Grises -> Normalizar histograma -> Binarizar -> Ruido -> Filtrar
-  Al final se muestran las imagenes convertidas de vuelta a RGB.
+Pipeline: RGB -> Grises -> Normalizar -> Binarizar -> Ruido -> Filtrar
+Toggle RGB/Grises en paneles de resultado.
 """
 
 import tkinter as tk
@@ -20,7 +17,6 @@ from spatial_filters import filtro_media, filtro_mediana, filtro_moda
 from frequency_filters import filtrar_en_frecuencia, obtener_magnitud_espectro
 from metrics import calcular_mse, calcular_psnr
 
-# Tamano de respaldo si el frame aun no tiene dimensiones
 THUMB_FALLBACK_W = 400
 THUMB_FALLBACK_H = 350
 
@@ -31,7 +27,6 @@ class AplicacionFiltros:
         self.root.title("Filtrado de Imagenes - IA")
         self.root.state('zoomed')
 
-        # Estado de la aplicacion
         self.imagen_original_rgb = None
         self.imagen_gris = None
         self.imagen_normalizada = None
@@ -39,8 +34,15 @@ class AplicacionFiltros:
         self.imagen_ruidosa = None
         self.imagen_filtrada = None
         self.imagen_frecuencia = None
+        # Versiones RGB (procesadas canal por canal)
+        self.ruidosa_rgb = None
+        self.filtrada_rgb = None
+        self.frecuencia_rgb = None
         self.display_w = 0
         self.display_h = 0
+        # Modo de vista: 'grises' o 'rgb'
+        self.vista = {'ruidosa': 'grises', 'filtrada': 'grises', 'frecuencia': 'grises'}
+        self.btns_toggle = {}
 
         self._construir_interfaz()
 
@@ -48,19 +50,18 @@ class AplicacionFiltros:
         main = ttk.Frame(self.root)
         main.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # Panel izquierdo - Controles
         panel_ctrl = ttk.LabelFrame(main, text="Controles", width=280)
         panel_ctrl.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 5))
         panel_ctrl.pack_propagate(False)
 
-        # --- Seccion: Cargar Imagen ---
+        # 1. Imagen
         sec1 = ttk.LabelFrame(panel_ctrl, text="1. Imagen")
         sec1.pack(fill=tk.X, padx=5, pady=3)
         ttk.Button(sec1, text="Cargar Imagen", command=self._cargar_imagen).pack(fill=tk.X, padx=5, pady=3)
         self.lbl_info = ttk.Label(sec1, text="Sin imagen", wraplength=250)
         self.lbl_info.pack(padx=5, pady=2)
 
-        # --- Seccion: Ruido ---
+        # 2. Ruido
         sec2 = ttk.LabelFrame(panel_ctrl, text="2. Ruido Sal y Pimienta")
         sec2.pack(fill=tk.X, padx=5, pady=3)
         ttk.Label(sec2, text="Nivel de ruido (%):").pack(padx=5, anchor=tk.W)
@@ -71,7 +72,7 @@ class AplicacionFiltros:
         self.var_ruido.trace_add('write', lambda *a: self.lbl_ruido.config(text=f"{self.var_ruido.get()}%"))
         ttk.Button(sec2, text="Aplicar Ruido", command=self._aplicar_ruido).pack(fill=tk.X, padx=5, pady=3)
 
-        # --- Seccion: Filtros Espaciales ---
+        # 3. Filtros Espaciales
         sec3 = ttk.LabelFrame(panel_ctrl, text="3. Filtros Espaciales")
         sec3.pack(fill=tk.X, padx=5, pady=3)
         ttk.Label(sec3, text="Tipo de filtro:").pack(padx=5, anchor=tk.W)
@@ -82,7 +83,7 @@ class AplicacionFiltros:
         ttk.Combobox(sec3, textvariable=self.var_kernel, values=["3x3", "5x5", "7x7"], state='readonly').pack(fill=tk.X, padx=5)
         ttk.Button(sec3, text="Aplicar Filtro Espacial", command=self._aplicar_filtro_espacial).pack(fill=tk.X, padx=5, pady=3)
 
-        # --- Seccion: Filtro en Frecuencia ---
+        # 4. Filtro en Frecuencia
         sec4 = ttk.LabelFrame(panel_ctrl, text="4. Filtro en Frecuencia")
         sec4.pack(fill=tk.X, padx=5, pady=3)
         ttk.Label(sec4, text="Tipo:").pack(padx=5, anchor=tk.W)
@@ -96,7 +97,7 @@ class AplicacionFiltros:
         self.var_diametro.trace_add('write', lambda *a: self.lbl_diam.config(text=f"{self.var_diametro.get()} px"))
         ttk.Button(sec4, text="Aplicar Filtro Frecuencia", command=self._aplicar_filtro_frecuencia).pack(fill=tk.X, padx=5, pady=3)
 
-        # Panel central - Imagenes (2x3 grid)
+        # Panel central - Imagenes (2x3)
         panel_imgs = ttk.Frame(main)
         panel_imgs.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
@@ -105,27 +106,31 @@ class AplicacionFiltros:
         self.fotos = {}
         nombres = [
             ("original",   "1. Original (RGB)"),
-            ("ruidosa",    "2. Con Ruido (RGB)"),
-            ("filtrada",   "3. Filtrada Espacial (RGB)"),
-            ("frecuencia", "4. Filtrada Frecuencia (RGB)"),
+            ("ruidosa",    "2. Con Ruido"),
+            ("filtrada",   "3. Filtrada Espacial"),
+            ("frecuencia", "4. Filtrada Frecuencia"),
             ("espectro",   "5. Espectro FFT"),
             ("mascara",    "6. Mascara Frecuencia")
         ]
+        toggleables = {"ruidosa", "filtrada", "frecuencia"}
         for idx, (clave, titulo) in enumerate(nombres):
-            fila = idx // 3
-            col = idx % 3
+            fila, col = idx // 3, idx % 3
             frame = ttk.LabelFrame(panel_imgs, text=titulo)
             frame.grid(row=fila, column=col, padx=3, pady=3, sticky='nsew')
             lbl = ttk.Label(frame, text="Sin imagen", anchor=tk.CENTER)
             lbl.pack(expand=True, fill=tk.BOTH, padx=2, pady=2)
             self.frames_img[clave] = frame
             self.labels_img[clave] = lbl
+            if clave in toggleables:
+                btn = ttk.Button(frame, text="Ver RGB",
+                                 command=lambda c=clave: self._toggle_vista(c))
+                btn.pack(pady=(0, 3))
+                self.btns_toggle[clave] = btn
         for i in range(2):
             panel_imgs.rowconfigure(i, weight=1)
         for j in range(3):
             panel_imgs.columnconfigure(j, weight=1)
 
-        # Barra de estado
         self.barra_estado = ttk.Label(self.root, text="Listo", relief=tk.SUNKEN, anchor=tk.W)
         self.barra_estado.pack(side=tk.BOTTOM, fill=tk.X)
 
@@ -134,21 +139,17 @@ class AplicacionFiltros:
         self.root.update_idletasks()
 
     def _calcular_tamano_display(self, img_w, img_h):
-        """Calcula el tamano de display UNA sola vez al cargar la imagen."""
         frame = self.frames_img["original"]
         frame.update_idletasks()
         fw = frame.winfo_width() - 16
         fh = frame.winfo_height() - 36
-        if fw < 50:
-            fw = THUMB_FALLBACK_W
-        if fh < 50:
-            fh = THUMB_FALLBACK_H
+        if fw < 50: fw = THUMB_FALLBACK_W
+        if fh < 50: fh = THUMB_FALLBACK_H
         ratio = min(fw / img_w, fh / img_h)
         self.display_w = max(int(img_w * ratio), 1)
         self.display_h = max(int(img_h * ratio), 1)
 
     def _mostrar_imagen_gris(self, clave, imagen_np):
-        """Muestra una imagen en escala de grises en el label."""
         lbl = self.labels_img[clave]
         img_pil = Image.fromarray(imagen_np, mode='L')
         img_pil = img_pil.resize((self.display_w, self.display_h), Image.LANCZOS)
@@ -157,7 +158,6 @@ class AplicacionFiltros:
         self.fotos[clave] = foto
 
     def _mostrar_imagen_rgb(self, clave, imagen_np_rgb):
-        """Muestra una imagen RGB en el label."""
         lbl = self.labels_img[clave]
         img_pil = Image.fromarray(imagen_np_rgb, mode='RGB')
         img_pil = img_pil.resize((self.display_w, self.display_h), Image.LANCZOS)
@@ -165,6 +165,51 @@ class AplicacionFiltros:
         lbl.config(image=foto, text="")
         self.fotos[clave] = foto
 
+    def _mostrar_panel(self, clave):
+        """Muestra la imagen correcta segun el modo de vista actual."""
+        modo = self.vista.get(clave, 'grises')
+        if modo == 'rgb':
+            rgb_map = {'ruidosa': self.ruidosa_rgb,
+                       'filtrada': self.filtrada_rgb,
+                       'frecuencia': self.frecuencia_rgb}
+            img_rgb = rgb_map.get(clave)
+            if img_rgb is not None:
+                self._mostrar_imagen_rgb(clave, img_rgb)
+                return
+        # Grises (default)
+        gris_map = {'ruidosa': self.imagen_ruidosa,
+                    'filtrada': self.imagen_filtrada,
+                    'frecuencia': self.imagen_frecuencia}
+        img_gris = gris_map.get(clave)
+        if img_gris is not None:
+            self._mostrar_imagen_rgb(clave, gris_a_rgb(img_gris))
+
+    def _toggle_vista(self, clave):
+        """Alterna entre vista grises y RGB para un panel."""
+        rgb_map = {'ruidosa': self.ruidosa_rgb,
+                   'filtrada': self.filtrada_rgb,
+                   'frecuencia': self.frecuencia_rgb}
+        if self.vista[clave] == 'grises':
+            if rgb_map[clave] is None:
+                messagebox.showinfo("Aviso", "Aun no hay version RGB. Aplica la operacion primero.")
+                return
+            self.vista[clave] = 'rgb'
+            self.btns_toggle[clave].config(text="Ver Grises")
+        else:
+            self.vista[clave] = 'grises'
+            self.btns_toggle[clave].config(text="Ver RGB")
+        self._mostrar_panel(clave)
+
+    def _aplicar_filtro_canal(self, canal, tipo, tamano):
+        """Aplica un filtro espacial a un solo canal."""
+        if tipo == "Media":
+            return filtro_media(canal, tamano)
+        elif tipo == "Mediana":
+            return filtro_mediana(canal, tamano)
+        else:
+            return filtro_moda(canal, tamano)
+
+    # --- Cargar imagen ---
     def _cargar_imagen(self):
         ruta = filedialog.askopenfilename(
             title="Seleccionar imagen",
@@ -175,56 +220,63 @@ class AplicacionFiltros:
         try:
             img = Image.open(ruta)
             self.imagen_original_rgb = np.array(img)
-
-            # Si tiene canal alpha, quedarse con RGB
             if len(self.imagen_original_rgb.shape) == 3 and self.imagen_original_rgb.shape[2] == 4:
                 self.imagen_original_rgb = self.imagen_original_rgb[:, :, :3]
-
-            # Si es escala de grises, convertir a RGB
             if len(self.imagen_original_rgb.shape) == 2:
                 self.imagen_original_rgb = gris_a_rgb(self.imagen_original_rgb)
 
-            self._estado("Preprocesando: RGB -> Grises -> Normalizar -> Binarizar...")
-
-            # Calcular tamano de display UNA sola vez
+            self._estado("Preprocesando...")
             alto_img, ancho_img = self.imagen_original_rgb.shape[0], self.imagen_original_rgb.shape[1]
             self._calcular_tamano_display(ancho_img, alto_img)
-
-            # 1. Mostrar original RGB
             self._mostrar_imagen_rgb("original", self.imagen_original_rgb)
 
-            # 2. Convertir a escala de grises (background)
             self.imagen_gris = convertir_a_grises(self.imagen_original_rgb)
-
-            # 3. Normalizar histograma (background)
             self.imagen_normalizada = normalizar_histograma(self.imagen_gris)
-
-            # 4. Binarizar (background)
             self.imagen_binarizada = binarizar(self.imagen_normalizada)
 
-            alto, ancho = self.imagen_gris.shape
-            self.lbl_info.config(text=f"{os.path.basename(ruta)}\n{ancho}x{alto} px")
+            self.lbl_info.config(text=f"{os.path.basename(ruta)}\n{ancho_img}x{alto_img} px")
             self._estado("Imagen cargada y preprocesada")
-
             # Resetear
             self.imagen_ruidosa = None
             self.imagen_filtrada = None
             self.imagen_frecuencia = None
+            self.ruidosa_rgb = None
+            self.filtrada_rgb = None
+            self.frecuencia_rgb = None
+            for k in self.vista:
+                self.vista[k] = 'grises'
+                self.btns_toggle[k].config(text="Ver RGB")
         except Exception as e:
             messagebox.showerror("Error", f"No se pudo cargar la imagen:\n{e}")
 
+    # --- Ruido ---
     def _aplicar_ruido(self):
         if self.imagen_binarizada is None:
             messagebox.showwarning("Aviso", "Primero carga una imagen.")
             return
         porcentaje = self.var_ruido.get()
-        self._estado(f"Aplicando ruido sal y pimienta ({porcentaje}%)...")
+        self._estado(f"Aplicando ruido ({porcentaje}%)...")
+        # Grises: ruido sobre binarizada
         self.imagen_ruidosa = agregar_ruido_sal_pimienta(self.imagen_binarizada, porcentaje)
-        self._mostrar_imagen_rgb("ruidosa", gris_a_rgb(self.imagen_ruidosa))
+        # RGB: ruido sobre cada canal del original
+        alto, ancho = self.imagen_original_rgb.shape[0], self.imagen_original_rgb.shape[1]
+        self.ruidosa_rgb = np.zeros((alto, ancho, 3), dtype=np.uint8)
+        for c in range(3):
+            self.ruidosa_rgb[:, :, c] = agregar_ruido_sal_pimienta(
+                self.imagen_original_rgb[:, :, c], porcentaje)
+        # Resetear filtros (nuevo ruido invalida los anteriores)
+        self.imagen_filtrada = None
+        self.imagen_frecuencia = None
+        self.filtrada_rgb = None
+        self.frecuencia_rgb = None
+        self.vista['ruidosa'] = 'grises'
+        self.btns_toggle['ruidosa'].config(text="Ver RGB")
+        self._mostrar_panel("ruidosa")
         mse = calcular_mse(self.imagen_binarizada, self.imagen_ruidosa)
         psnr = calcular_psnr(self.imagen_binarizada, self.imagen_ruidosa)
         self._estado(f"Ruido aplicado — MSE: {mse:.2f} | PSNR: {psnr:.2f} dB")
 
+    # --- Filtro Espacial ---
     def _aplicar_filtro_espacial(self):
         if self.imagen_ruidosa is None:
             messagebox.showwarning("Aviso", "Primero aplica ruido a la imagen.")
@@ -235,23 +287,30 @@ class AplicacionFiltros:
         self.root.update_idletasks()
 
         def tarea():
-            if tipo == "Media":
-                resultado = filtro_media(self.imagen_ruidosa, tamano)
-            elif tipo == "Mediana":
-                resultado = filtro_mediana(self.imagen_ruidosa, tamano)
-            else:
-                resultado = filtro_moda(self.imagen_ruidosa, tamano)
-            self.root.after(0, lambda: self._filtro_espacial_listo(resultado, tipo, tamano))
+            # Grises
+            resultado_gris = self._aplicar_filtro_canal(self.imagen_ruidosa, tipo, tamano)
+            # RGB (canal por canal)
+            alto, ancho = self.imagen_original_rgb.shape[0], self.imagen_original_rgb.shape[1]
+            resultado_rgb = np.zeros((alto, ancho, 3), dtype=np.uint8)
+            if self.ruidosa_rgb is not None:
+                for c in range(3):
+                    resultado_rgb[:, :, c] = self._aplicar_filtro_canal(
+                        self.ruidosa_rgb[:, :, c], tipo, tamano)
+            self.root.after(0, lambda: self._espacial_listo(resultado_gris, resultado_rgb, tipo, tamano))
 
         threading.Thread(target=tarea, daemon=True).start()
 
-    def _filtro_espacial_listo(self, resultado, tipo, tamano):
-        self.imagen_filtrada = resultado
-        self._mostrar_imagen_rgb("filtrada", gris_a_rgb(self.imagen_filtrada))
+    def _espacial_listo(self, resultado_gris, resultado_rgb, tipo, tamano):
+        self.imagen_filtrada = resultado_gris
+        self.filtrada_rgb = resultado_rgb
+        self.vista['filtrada'] = 'grises'
+        self.btns_toggle['filtrada'].config(text="Ver RGB")
+        self._mostrar_panel("filtrada")
         mse = calcular_mse(self.imagen_binarizada, self.imagen_filtrada)
         psnr = calcular_psnr(self.imagen_binarizada, self.imagen_filtrada)
         self._estado(f"Filtro {tipo} ({tamano}x{tamano}) — MSE: {mse:.2f} | PSNR: {psnr:.2f} dB")
 
+    # --- Filtro Frecuencia ---
     def _aplicar_filtro_frecuencia(self):
         if self.imagen_ruidosa is None:
             messagebox.showwarning("Aviso", "Primero aplica ruido a la imagen.")
@@ -259,24 +318,36 @@ class AplicacionFiltros:
         tipo = self.var_freq.get()
         diametro = self.var_diametro.get()
         tipo_interno = 'ideal_pb' if 'Bajo' in tipo else 'ideal_pa'
-        self._estado(f"Aplicando {tipo} (diametro={diametro}px)... Esto puede tardar.")
+        self._estado(f"Aplicando {tipo} (d={diametro}px)... Esto puede tardar.")
         self.root.update_idletasks()
 
         def tarea():
-            resultado, espectro_orig, mascara, espectro_filt = filtrar_en_frecuencia(
-                self.imagen_ruidosa, tipo_interno, diametro
-            )
-            magnitud = obtener_magnitud_espectro(espectro_orig)
-            mascara_visual = (mascara * 255).astype(np.uint8)
-            self.root.after(0, lambda: self._frecuencia_listo(resultado, magnitud, mascara_visual, tipo, diametro))
+            # Grises
+            res_gris, esp_orig, mascara, _ = filtrar_en_frecuencia(
+                self.imagen_ruidosa, tipo_interno, diametro)
+            magnitud = obtener_magnitud_espectro(esp_orig)
+            mascara_vis = (mascara * 255).astype(np.uint8)
+            # RGB (canal por canal)
+            alto, ancho = self.imagen_original_rgb.shape[0], self.imagen_original_rgb.shape[1]
+            res_rgb = np.zeros((alto, ancho, 3), dtype=np.uint8)
+            if self.ruidosa_rgb is not None:
+                for c in range(3):
+                    canal_filt, _, _, _ = filtrar_en_frecuencia(
+                        self.ruidosa_rgb[:, :, c], tipo_interno, diametro)
+                    res_rgb[:, :, c] = canal_filt
+            self.root.after(0, lambda: self._frecuencia_listo(
+                res_gris, res_rgb, magnitud, mascara_vis, tipo, diametro))
 
         threading.Thread(target=tarea, daemon=True).start()
 
-    def _frecuencia_listo(self, resultado, magnitud, mascara_visual, tipo, diametro):
-        self.imagen_frecuencia = resultado
-        self._mostrar_imagen_rgb("frecuencia", gris_a_rgb(self.imagen_frecuencia))
+    def _frecuencia_listo(self, res_gris, res_rgb, magnitud, mascara_vis, tipo, diametro):
+        self.imagen_frecuencia = res_gris
+        self.frecuencia_rgb = res_rgb
+        self.vista['frecuencia'] = 'grises'
+        self.btns_toggle['frecuencia'].config(text="Ver RGB")
+        self._mostrar_panel("frecuencia")
         self._mostrar_imagen_gris("espectro", magnitud)
-        self._mostrar_imagen_gris("mascara", mascara_visual)
+        self._mostrar_imagen_gris("mascara", mascara_vis)
         mse = calcular_mse(self.imagen_binarizada, self.imagen_frecuencia)
         psnr = calcular_psnr(self.imagen_binarizada, self.imagen_frecuencia)
         self._estado(f"{tipo} (d={diametro}px) — MSE: {mse:.2f} | PSNR: {psnr:.2f} dB")
