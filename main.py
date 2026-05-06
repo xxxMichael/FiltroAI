@@ -1,7 +1,7 @@
 """
-Programa principal - GUI interactiva para procesamiento de imagenes.
+Programa principal - Interfaz grafica para procesamiento de imagenes.
 Pipeline: RGB -> Grises -> Normalizar -> Binarizar -> Ruido -> Filtrar
-Toggle RGB/Grises en paneles de resultado.
+Permite alternar la visualizacion entre escala de grises y RGB en cada panel.
 """
 
 import tkinter as tk
@@ -105,7 +105,7 @@ class AplicacionFiltros:
         self.labels_img = {}
         self.fotos = {}
         nombres = [
-            ("original",   "1. Original (RGB)"),
+            ("original",   "1. Original "),
             ("ruidosa",    "2. Con Ruido"),
             ("filtrada",   "3. Filtrada Espacial"),
             ("frecuencia", "4. Filtrada Frecuencia"),

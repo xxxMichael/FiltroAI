@@ -1,6 +1,7 @@
 """
 Modulo de preprocesamiento de imagenes.
-Conversion a escala de grises e inyeccion de ruido sal y pimienta.
+Conversion a grises, normalizacion de histograma, binarizacion,
+inyeccion de ruido sal y pimienta, y conversion de vuelta a RGB.
 """
 
 import numpy as np
@@ -162,7 +163,7 @@ def binarizar(imagen, umbral=None):
 def gris_a_rgb(imagen_gris):
     """
     Convierte una imagen en escala de grises a RGB replicando el canal.
-    Para la presentacion final en RGB como indica el profesor.
+    Utilizada para la presentacion final de resultados en formato RGB.
     
     Parametros:
         imagen_gris: numpy array 2D uint8
@@ -201,7 +202,7 @@ def agregar_ruido_sal_pimienta(imagen, porcentaje):
     num_pixeles_ruido = int(total_pixeles * porcentaje / 100.0)
     
     # Generar posiciones aleatorias
-    np.random.seed(None)  # Semilla aleatoria para cada ejecucion
+    np.random.seed(None)  # Semilla distinta en cada ejecucion
     
     for _ in range(num_pixeles_ruido):
         fila = np.random.randint(0, alto)

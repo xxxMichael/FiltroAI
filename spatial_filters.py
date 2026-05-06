@@ -1,7 +1,7 @@
 """
 Filtros en el dominio espacial implementados manualmente.
-Incluye filtros de media, mediana y moda con convolucion manual.
-NO se usan funciones predefinidas de convolucion ni estadisticas.
+Incluye filtros de media, mediana y moda con convolucion por ventana deslizante.
+Toda la logica esta hecha con bucles for sin funciones predefinidas.
 """
 
 import numpy as np
@@ -51,7 +51,7 @@ def filtro_mediana(imagen, tamano_kernel=3):
     Para cada pixel (x,y), recopila los valores de la vecindad,
     los ordena y selecciona el valor central (mediana).
     
-    Nota: El filtro de mediana es particularmente efectivo para
+    El filtro de mediana es particularmente efectivo para
     eliminar ruido sal y pimienta.
     
     Parametros:
